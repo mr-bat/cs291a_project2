@@ -7,8 +7,29 @@ require 'google/cloud/storage'
 storage = Google::Cloud::Storage.new(project_id: 'cs291-f19')
 bucket = storage.bucket 'cs291_project2', skip_lookup: true
 
-def validate_sha256(string)
-  !string.match(/\A[a-zA-Z0-9]{2}\/[a-zA-Z0-9]{2}\/[a-zA-Z0-9]{60}\z/).nil?
+def validate_internal_sha256(string)
+  !string.match(%r{\A[a-zA-Z0-9]{2}/[a-zA-Z0-9]{2}/[a-zA-Z0-9]{60}\z}).nil?
+end
+
+def normalize_hash(string)
+  unless validate_internal_sha256 string
+    raise 'Bad Argument at translate_hash_to_internal'
+  end
+
+  string.gsub('/', '')
+end
+
+def internalize_string(string)
+  string.dup.insert(2, '/').insert(5, '/')
+end
+
+def file_exist(hash)
+  storage = Google::Cloud::Storage.new(project_id: 'cs291-f19')
+  bucket = storage.bucket 'cs291_project2', skip_lookup: true
+  files = bucket.files
+  files.all do |file|
+    return true if hash == file.name || internalize_string(hash) == file.name
+  end
 end
 
 get '/' do
@@ -19,30 +40,42 @@ get '/files/' do
   valid_hashes = []
   files = bucket.files
   files.all do |file|
-    valid_hashes << file.name.gsub('/','') if validate_sha256 file.name
+    if validate_internal_sha256 file.name
+      valid_hashes << normalize_hash(file.name)
+    end
   end
-  print valid_hashes
   content_type :json
   valid_hashes.to_json
 end
 
-post '/upload' do
-  unless params[:file] &&
-         (tmpfile = params[:file][:tempfile]) &&
-         (name = params[:file][:filename])
+post '/files/' do
+  unless params &&
+         params[:file] &&
+         params[:file][:tempfile] &&
+         params[:file][:filename]
     @error = 'No file selected'
-    return haml(:upload)
+    return 422
   end
-  warn "Uploading file, original name #{name.inspect}"
-  while blk = tmpfile.read(65_536)
-    # here you would write it to its final location
-    warn blk.inspect
+  unless params[:file][:tempfile].size < 1024 * 1024
+    @error = 'File too large'
+    return 422
   end
-  'Upload complete'
-end
 
-post '/' do
-  require 'pp'
-  PP.pp request
-  "POST\n"
+  filename = params[:file][:filename]
+  content = params[:file][:tempfile].read
+  hash = Digest::SHA256.hexdigest content
+
+  return 409 if file_exist hash
+
+  puts hash
+  puts content
+  puts filename
+
+  bucket.create_file StringIO.new(content), internalize_string(hash)
+  bucket.create_file StringIO.new(request.env['CONTENT_TYPE']), hash
+  response = {
+    'uploaded' => hash
+  }
+  content_type :json
+  [201, response.to_json]
 end
