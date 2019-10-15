@@ -8,11 +8,11 @@ storage = Google::Cloud::Storage.new(project_id: 'cs291-f19')
 bucket = storage.bucket 'cs291_project2', skip_lookup: true
 
 def validate_internal_sha256(string)
-  !string.match(%r{\A[a-zA-Z0-9]{2}/[a-zA-Z0-9]{2}/[a-zA-Z0-9]{60}\z}).nil?
+  !string.match(%r{\A[a-fA-F0-9]{2}/[a-fA-F0-9]{2}/[a-fA-F0-9]{60}\z}).nil?
 end
 
 def validate_sha256(string)
-  !string.match(%r{\A[a-zA-Z0-9]{64}\z}).nil?
+  !string.match(%r{\A[a-fA-F0-9]{64}\z}).nil?
 end
 
 def normalize_hash(string)
@@ -53,13 +53,12 @@ get '/files/' do
 end
 
 post '/files/' do
-  extracted_type = request.env['CONTENT_TYPE'].split(/ bound/).first
   puts params
-  unless params['file'] || params[:file]
+  unless params['file'] &&
          # params[:file]&.key?('filename') &&
          # params[:file]&.key?('tempfile')
-         # params[:file][:filename] &&
-         # params[:file][:tempfile]
+         params['file']['filename'] &&
+         params['file']['tempfile']
     @error = 'No file selected'
     # puts params
     # puts params['file']
@@ -67,20 +66,23 @@ post '/files/' do
     # puts params[:file][:tempfile]
     return 422
   end
-  unless params[:file][:tempfile].size < 1024 * 1024
+  unless params['file']['tempfile'].size <= 1024 * 1024
     @error = 'File too large'
     return 422
   end
 
+  puts params[:file]['head']
+  puts params[:file]['head']
   filename = params[:file][:filename]
   content = params[:file][:tempfile].read
   hash = Digest::SHA256.hexdigest content
+  extracted_type = params[:file]['head'].split(/Content-Type: /)[1]
 
   return 409 if file_exist hash
 
-  puts hash
-  puts content
-  puts filename
+  # puts hash
+  # puts content
+  # puts filename
   puts extracted_type
 
   bucket.create_file StringIO.new(content), internalize_string(hash)
@@ -93,6 +95,8 @@ end
 
 get '/files/:hash' do |hash|
   hash = hash.downcase
+  puts hash
+  puts validate_sha256 hash
   return 422 unless validate_sha256 hash
   return 404 unless file_exist hash
 
@@ -104,6 +108,7 @@ get '/files/:hash' do |hash|
 
   final_content = content.read
   final_type = type.read
+  puts final_type
 
   content_type final_type
   final_content
