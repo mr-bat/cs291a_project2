@@ -11,6 +11,10 @@ def validate_internal_sha256(string)
   !string.match(%r{\A[a-zA-Z0-9]{2}/[a-zA-Z0-9]{2}/[a-zA-Z0-9]{60}\z}).nil?
 end
 
+def validate_sha256(string)
+  !string.match(%r{\A[a-zA-Z0-9]{64}\z}).nil?
+end
+
 def normalize_hash(string)
   unless validate_internal_sha256 string
     raise 'Bad Argument at translate_hash_to_internal'
@@ -49,11 +53,18 @@ get '/files/' do
 end
 
 post '/files/' do
-  unless params &&
-         params[:file] &&
-         params[:file][:tempfile] &&
-         params[:file][:filename]
+  extracted_type = request.env['CONTENT_TYPE'].split(/ bound/).first
+  puts params
+  unless params['file'] || params[:file]
+         # params[:file]&.key?('filename') &&
+         # params[:file]&.key?('tempfile')
+         # params[:file][:filename] &&
+         # params[:file][:tempfile]
     @error = 'No file selected'
+    # puts params
+    # puts params['file']
+    # puts params['file']['filename']
+    # puts params[:file][:tempfile]
     return 422
   end
   unless params[:file][:tempfile].size < 1024 * 1024
@@ -70,12 +81,47 @@ post '/files/' do
   puts hash
   puts content
   puts filename
+  puts extracted_type
 
   bucket.create_file StringIO.new(content), internalize_string(hash)
-  bucket.create_file StringIO.new(request.env['CONTENT_TYPE']), hash
+  bucket.create_file StringIO.new(extracted_type), hash
   response = {
     'uploaded' => hash
   }
-  content_type :json
   [201, response.to_json]
+end
+
+get '/files/:hash' do |hash|
+  hash = hash.downcase
+  return 422 unless validate_sha256 hash
+  return 404 unless file_exist hash
+
+  content = (bucket.file internalize_string(hash)).download
+  type = (bucket.file hash).download
+
+  content.rewind
+  type.rewind
+
+  final_content = content.read
+  final_type = type.read
+
+  content_type final_type
+  final_content
+end
+
+delete '/files/:hash' do |hash|
+  hash = hash.downcase
+  return 422 unless validate_sha256 hash
+  return 200 unless file_exist hash
+
+  puts hash
+  content = bucket.file internalize_string(hash)
+  type = bucket.file hash
+
+  content.delete
+  type.delete
+
+  return 200
+  # rescue
+  #   return 203
 end
