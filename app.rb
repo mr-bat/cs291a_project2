@@ -53,40 +53,26 @@ get '/files/' do
 end
 
 post '/files/' do
-  puts params
   unless params['file'] &&
-         # params[:file]&.key?('filename') &&
-         # params[:file]&.key?('tempfile')
          params['file']['filename'] &&
          params['file']['tempfile']
-    @error = 'No file selected'
-    # puts params
-    # puts params['file']
-    # puts params['file']['filename']
-    # puts params[:file][:tempfile]
-    return 422
+    return [422, 'No file selected']
   end
   unless params['file']['tempfile'].size <= 1024 * 1024
-    @error = 'File too large'
-    return 422
+    return [422, 'File too large']
   end
 
-  puts params[:file]['head']
-  puts params[:file]['head']
-  filename = params[:file][:filename]
   content = params[:file][:tempfile].read
   hash = Digest::SHA256.hexdigest content
   extracted_type = params[:file]['head'].split(/Content-Type: /)[1]
+                                        .split
+                                        .first
 
-  return 409 if file_exist hash
+  return [409, 'File exist'] if file_exist hash
 
-  # puts hash
-  # puts content
-  # puts filename
-  puts extracted_type
-
-  bucket.create_file StringIO.new(content), internalize_string(hash)
-  bucket.create_file StringIO.new(extracted_type), hash
+  bucket.create_file StringIO.new(content),
+                     internalize_string(hash),
+                     content_type: extracted_type
   response = {
     'uploaded' => hash
   }
@@ -95,38 +81,24 @@ end
 
 get '/files/:hash' do |hash|
   hash = hash.downcase
-  puts hash
-  puts validate_sha256 hash
-  return 422 unless validate_sha256 hash
-  return 404 unless file_exist hash
+  return [422, 'Invalid hash'] unless validate_sha256 hash
+  return [404, 'No such file'] unless file_exist hash
 
-  content = (bucket.file internalize_string(hash)).download
-  type = (bucket.file hash).download
-
+  file = bucket.file internalize_string(hash)
+  content = file.download
   content.rewind
-  type.rewind
 
-  final_content = content.read
-  final_type = type.read
-  puts final_type
-
-  content_type final_type
-  final_content
+  content_type file.content_type
+  content.read
 end
 
 delete '/files/:hash' do |hash|
   hash = hash.downcase
-  return 422 unless validate_sha256 hash
-  return 200 unless file_exist hash
+  return [422, 'Invalid hash'] unless validate_sha256 hash
+  return [200, 'No such file or already deleted'] unless file_exist hash
 
-  puts hash
   content = bucket.file internalize_string(hash)
-  type = bucket.file hash
-
   content.delete
-  type.delete
 
-  return 200
-  # rescue
-  #   return 203
+  [200, 'File deleted']
 end
